@@ -20,16 +20,29 @@ type keyValueServer struct {
 	joinChan              chan net.Conn
 	leaveChan             chan net.Conn
 	droppedClientsCounter int32
+	commandChannel        chan command // Channel for centralized store access to be thread-safe
+}
+
+type command struct {
+	action   string
+	key      string
+	value    []byte
+	oldValue []byte
+	newValue []byte
+	respChan chan string
 }
 
 func New(store kvstore.KVStore) KeyValueServer {
-	return &keyValueServer{
-		store:     store,
-		clients:   make(map[net.Conn]*client),
-		closeChan: make(chan struct{}),
-		joinChan:  make(chan net.Conn),
-		leaveChan: make(chan net.Conn),
+	kvs := &keyValueServer{
+		store:          store,
+		clients:        make(map[net.Conn]*client),
+		closeChan:      make(chan struct{}),
+		joinChan:       make(chan net.Conn),
+		leaveChan:      make(chan net.Conn),
+		commandChannel: make(chan command),
 	}
+	go kvs.storeManager()
+	return kvs
 }
 
 func (kvs *keyValueServer) Start(port int) error {
@@ -132,24 +145,41 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 			}
 			key := parts[1]
 			value := []byte(parts[2])
-			kvs.store.Put(key, value)
+			respChan := make(chan string)
+			kvs.commandChannel <- command{
+				action:   "Put",
+				key:      key,
+				value:    value,
+				respChan: respChan,
+			}
+			<-respChan
 
 		case "Get":
 			if len(parts) < 2 {
 				continue
 			}
 			key := parts[1]
-			values := kvs.store.Get(key)
-			for _, v := range values {
-				cli.writeChan <- fmt.Sprintf("%s:%s\n", parts[1], string(v))
+			respChan := make(chan string)
+			kvs.commandChannel <- command{
+				action:   "Get",
+				key:      key,
+				respChan: respChan,
 			}
+			response := <-respChan
+			cli.writeChan <- response
 
 		case "Delete":
 			if len(parts) < 2 {
 				continue
 			}
 			key := parts[1]
-			kvs.store.Delete(key)
+			respChan := make(chan string)
+			kvs.commandChannel <- command{
+				action:   "Delete",
+				key:      key,
+				respChan: respChan,
+			}
+			<-respChan
 
 		case "Update":
 			if len(parts) < 4 {
@@ -158,7 +188,15 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 			key := parts[1]
 			oldValue := []byte(parts[2])
 			newValue := []byte(parts[3])
-			kvs.store.Update(key, oldValue, newValue)
+			respChan := make(chan string)
+			kvs.commandChannel <- command{
+				action:   "Update",
+				key:      key,
+				oldValue: oldValue,
+				newValue: newValue,
+				respChan: respChan,
+			}
+			<-respChan
 		}
 	}
 
@@ -168,5 +206,28 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 func (kvs *keyValueServer) writeRoutine(conn net.Conn, cli *client) {
 	for msg := range cli.writeChan {
 		conn.Write([]byte(msg))
+	}
+}
+
+func (kvs *keyValueServer) storeManager() {
+	for cmd := range kvs.commandChannel {
+		switch cmd.action {
+		case "Put":
+			kvs.store.Put(cmd.key, cmd.value)
+			cmd.respChan <- "OK"
+		case "Get":
+			values := kvs.store.Get(cmd.key)
+			response := ""
+			for _, v := range values {
+				response += fmt.Sprintf("%s:%s\n", cmd.key, string(v))
+			}
+			cmd.respChan <- response
+		case "Delete":
+			kvs.store.Delete(cmd.key)
+			cmd.respChan <- "OK"
+		case "Update":
+			kvs.store.Update(cmd.key, cmd.oldValue, cmd.newValue)
+			cmd.respChan <- "OK"
+		}
 	}
 }
