@@ -60,7 +60,6 @@ func (kvs *keyValueServer) Start(port int) error {
 func (kvs *keyValueServer) Close() {
 	close(kvs.closeChan)
 	for conn := range kvs.clients {
-		close(kvs.clients[conn].writeChan)
 		err := conn.Close()
 		if err != nil {
 			return
@@ -167,22 +166,7 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 }
 
 func (kvs *keyValueServer) writeRoutine(conn net.Conn, cli *client) {
-	defer func() {
-		kvs.leaveChan <- conn
-	}()
-
-	for {
-		select {
-		case <-kvs.closeChan:
-			return
-		case msg, ok := <-cli.writeChan:
-			if !ok {
-				return // Channel closed
-			}
-			_, err := conn.Write([]byte(msg))
-			if err != nil {
-				return // Client disconnected or error occurred
-			}
-		}
+	for msg := range cli.writeChan {
+		conn.Write([]byte(msg))
 	}
 }
