@@ -214,7 +214,6 @@ func (kvs *keyValueServer) storeManager() {
 		switch cmd.action {
 		case "Put":
 			kvs.store.Put(cmd.key, cmd.value)
-			cmd.respChan <- "OK"
 		case "Get":
 			values := kvs.store.Get(cmd.key)
 			response := ""
@@ -224,10 +223,8 @@ func (kvs *keyValueServer) storeManager() {
 			cmd.respChan <- response
 		case "Delete":
 			kvs.store.Delete(cmd.key)
-			cmd.respChan <- "OK"
 		case "Update":
 			kvs.store.Update(cmd.key, cmd.oldValue, cmd.newValue)
-			cmd.respChan <- "OK"
 		}
 	}
 }
