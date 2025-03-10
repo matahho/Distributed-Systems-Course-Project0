@@ -108,7 +108,7 @@ func (kvs *keyValueServer) newConnection(conn net.Conn) *client {
 	if kvs.clients[conn] != nil {
 		return kvs.clients[conn]
 	}
-	// I have used buffered channel to prevent Blocking
+	// I have used buffered channel to prevent Blocking for slow-reading clients
 	kvs.clients[conn] = &client{
 		writeChan: make(chan string, 500),
 		readChan:  make(chan string),
@@ -214,6 +214,7 @@ func (kvs *keyValueServer) storeManager() {
 		switch cmd.action {
 		case "Put":
 			kvs.store.Put(cmd.key, cmd.value)
+			cmd.respChan <- "OK"
 		case "Get":
 			values := kvs.store.Get(cmd.key)
 			response := ""
@@ -223,8 +224,10 @@ func (kvs *keyValueServer) storeManager() {
 			cmd.respChan <- response
 		case "Delete":
 			kvs.store.Delete(cmd.key)
+			cmd.respChan <- "OK"
 		case "Update":
 			kvs.store.Update(cmd.key, cmd.oldValue, cmd.newValue)
+			cmd.respChan <- "OK"
 		}
 	}
 }
