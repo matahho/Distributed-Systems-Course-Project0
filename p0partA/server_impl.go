@@ -10,7 +10,6 @@ import (
 
 type client struct {
 	writeChan chan string
-	readChan  chan string
 }
 
 type keyValueServer struct {
@@ -111,7 +110,6 @@ func (kvs *keyValueServer) newConnection(conn net.Conn) *client {
 	// I have used buffered channel to prevent Blocking for slow-reading clients
 	kvs.clients[conn] = &client{
 		writeChan: make(chan string, 500),
-		readChan:  make(chan string),
 	}
 	return kvs.clients[conn]
 }
@@ -126,7 +124,6 @@ func (kvs *keyValueServer) closeClient(conn net.Conn) {
 		}
 		delete(kvs.clients, conn)
 	}
-	//atomic.AddInt32(&kvs.droppedClientsCounter, 1)   We should not use atomic library
 	kvs.droppedClientsCounter++
 }
 
@@ -143,67 +140,29 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 			if len(parts) < 3 {
 				continue
 			}
-			key := parts[1]
-			value := []byte(parts[2])
-			respChan := make(chan string)
-			kvs.commandChannel <- command{
-				action:   "Put",
-				key:      key,
-				value:    value,
-				respChan: respChan,
-			}
-			<-respChan
-
+			kvs.handlePut(parts[1], []byte(parts[2]))
 		case "Get":
 			if len(parts) < 2 {
 				continue
 			}
-			key := parts[1]
-			respChan := make(chan string)
-			kvs.commandChannel <- command{
-				action:   "Get",
-				key:      key,
-				respChan: respChan,
-			}
-			response := <-respChan
+			response := kvs.handleGet(parts[1])
 			select {
 			case cli.writeChan <- response:
 			default:
 				fmt.Println("Dropping message for slow-reading client")
 			}
-
 		case "Delete":
 			if len(parts) < 2 {
 				continue
 			}
-			key := parts[1]
-			respChan := make(chan string)
-			kvs.commandChannel <- command{
-				action:   "Delete",
-				key:      key,
-				respChan: respChan,
-			}
-			<-respChan
-
+			kvs.handleDelete(parts[1])
 		case "Update":
 			if len(parts) < 4 {
 				continue
 			}
-			key := parts[1]
-			oldValue := []byte(parts[2])
-			newValue := []byte(parts[3])
-			respChan := make(chan string)
-			kvs.commandChannel <- command{
-				action:   "Update",
-				key:      key,
-				oldValue: oldValue,
-				newValue: newValue,
-				respChan: respChan,
-			}
-			<-respChan
+			kvs.handleUpdate(parts[1], []byte(parts[2]), []byte(parts[3]))
 		}
 	}
-
 	kvs.leaveChan <- conn
 }
 
@@ -234,4 +193,47 @@ func (kvs *keyValueServer) storeManager() {
 			cmd.respChan <- "OK"
 		}
 	}
+}
+
+func (kvs *keyValueServer) handlePut(key string, value []byte) string {
+	respChan := make(chan string)
+	kvs.commandChannel <- command{
+		action:   "Put",
+		key:      key,
+		value:    value,
+		respChan: respChan,
+	}
+	return <-respChan
+}
+
+func (kvs *keyValueServer) handleGet(key string) string {
+	respChan := make(chan string)
+	kvs.commandChannel <- command{
+		action:   "Get",
+		key:      key,
+		respChan: respChan,
+	}
+	return <-respChan
+}
+
+func (kvs *keyValueServer) handleDelete(key string) string {
+	respChan := make(chan string)
+	kvs.commandChannel <- command{
+		action:   "Delete",
+		key:      key,
+		respChan: respChan,
+	}
+	return <-respChan
+}
+
+func (kvs *keyValueServer) handleUpdate(key string, oldValue, newValue []byte) string {
+	respChan := make(chan string)
+	kvs.commandChannel <- command{
+		action:   "Update",
+		key:      key,
+		oldValue: oldValue,
+		newValue: newValue,
+		respChan: respChan,
+	}
+	return <-respChan
 }
