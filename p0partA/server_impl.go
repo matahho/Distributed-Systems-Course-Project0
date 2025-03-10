@@ -166,7 +166,11 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 				respChan: respChan,
 			}
 			response := <-respChan
-			cli.writeChan <- response
+			select {
+			case cli.writeChan <- response:
+			default:
+				fmt.Println("Dropping message for slow-reading client")
+			}
 
 		case "Delete":
 			if len(parts) < 2 {
