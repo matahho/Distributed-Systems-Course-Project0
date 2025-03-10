@@ -59,3 +59,25 @@ func helperFuncForTest(t *testing.T, inputValue int, expectedValue int) {
 		}
 	}
 }
+
+func TestSquarerImplWithEmptyChannel(t *testing.T) {
+	fmt.Println("Running TestSquarerImplWithEmptyChannel.")
+	input := make(chan int)
+	sq := SquarerImpl{}
+	squares := sq.Initialize(input)
+
+	go func() {
+		close(input)
+	}()
+
+	timeoutChan := time.After(time.Duration(timeoutMillis) * time.Millisecond)
+
+	select {
+	case <-timeoutChan:
+		t.Error("Test timed out.")
+	case result := <-squares:
+		if result != 0 {
+			t.Error("Error, received result", result, "unexpectedly.")
+		}
+	}
+}

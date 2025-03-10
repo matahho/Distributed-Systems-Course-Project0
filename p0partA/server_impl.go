@@ -146,11 +146,14 @@ func (kvs *keyValueServer) readRoutine(conn net.Conn, cli *client) {
 				continue
 			}
 			response := kvs.handleGet(parts[1])
+
+			// Check if the Buffer Channel is full or not
 			select {
 			case cli.writeChan <- response:
 			default:
 				fmt.Println("Dropping message for slow-reading client")
 			}
+
 		case "Delete":
 			if len(parts) < 2 {
 				continue
